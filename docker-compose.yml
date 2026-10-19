@@ -1,0 +1,16 @@
+services:
+  api:
+    build: .
+    container_name: skill_ps_back
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/skills.db
+    volumes:
+      - skill_ps_data:/app/data
+
+volumes:
+  skill_ps_data:
