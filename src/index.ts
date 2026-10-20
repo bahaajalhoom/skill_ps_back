@@ -145,8 +145,11 @@ app.post("/api/skills/install", (req: Request, res: Response) => {
       return res.json({ success: true, id, ...result });
     }
 
-    // If not found in local SQL, return simulated increment
-    res.json({ success: true, id, installs: (req.body?.currentInstalls || 0) + 1 });
+    // If not a custom skill in local SQL, do NOT return simulated 1
+    return res.status(400).json({
+      success: false,
+      message: "Ecosystem skill installs are tracked upstream and cannot be overwritten.",
+    });
   } catch (err: any) {
     console.error("Error in POST /api/skills/install:", err.message);
     res.status(500).json({ error: "Failed to increment installs", details: err.message });

@@ -211,7 +211,7 @@ export function deleteSkillFromDb(id: string): boolean {
 }
 
 export function incrementSkillInstallsInDb(id: string): { installs: number; weeklyInstalls: number[] } | null {
-  const getStmt = db.prepare("SELECT * FROM skills WHERE id = ? OR skill_id = ? LIMIT 1");
+  const getStmt = db.prepare("SELECT * FROM skills WHERE (id = ? OR skill_id = ?) AND is_custom = 1 LIMIT 1");
   const row: any = getStmt.get(id, id);
   if (!row) return null;
 

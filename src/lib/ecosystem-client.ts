@@ -205,7 +205,7 @@ npx skills-sh add ${source}/${skillId}
     name: existing?.name || skillId,
     author: owner,
     repoUrl: existing?.repoUrl || `https://github.com/${source}`,
-    installs: existing?.installs || 154200,
+    installs: existing?.installs || 420000,
     weeklyInstalls: existing?.weeklyInstalls || [12000, 13500, 14200, 15800, 17200, 18900, 20400, 22100],
     isOfficial: existing?.isOfficial ?? (owner === "vercel-labs" || owner === "anthropics" || owner === "cloudflare"),
     isCustom: existing?.isCustom ?? false,
