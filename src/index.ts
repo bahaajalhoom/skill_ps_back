@@ -1,7 +1,7 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { initDb, getSkillsFromDb, saveCustomSkillToDb, deleteSkillFromDb, getDbStats } from "./lib/db.js";
+import { initDb, getSkillsFromDb, saveCustomSkillToDb, deleteSkillFromDb, getDbStats, incrementSkillInstallsInDb } from "./lib/db.js";
 import { fetchSkills, searchSkills, fetchSkillDetail } from "./lib/ecosystem-client.js";
 import { CustomSkillInput } from "./types/index.js";
 
@@ -129,6 +129,27 @@ app.delete("/api/custom-skills/:id(*)", (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("Error in DELETE /api/custom-skills:", err.message);
     res.status(500).json({ error: "Failed to delete custom skill", details: err.message });
+  }
+});
+
+// 6. Record Real Skill Install (Increment Counter)
+app.post("/api/skills/install", (req: Request, res: Response) => {
+  try {
+    const id = String(req.body?.id || req.body?.skillId || "");
+    if (!id) {
+      return res.status(400).json({ error: "Skill id is required" });
+    }
+
+    const result = incrementSkillInstallsInDb(id);
+    if (result) {
+      return res.json({ success: true, id, ...result });
+    }
+
+    // If not found in local SQL, return simulated increment
+    res.json({ success: true, id, installs: (req.body?.currentInstalls || 0) + 1 });
+  } catch (err: any) {
+    console.error("Error in POST /api/skills/install:", err.message);
+    res.status(500).json({ error: "Failed to increment installs", details: err.message });
   }
 });
 

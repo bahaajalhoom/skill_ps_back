@@ -63,7 +63,7 @@ export function initDb(): void {
         s.installs,
         JSON.stringify(s.weeklyInstalls || [0, 0, 0, 0, 0, 0, 0, 0]),
         s.isOfficial ? 1 : 0,
-        0,
+        s.isCustom ? 1 : 0,
         s.description || "",
         s.category || "workflow",
         s.stars || 0,
@@ -208,6 +208,39 @@ export function deleteSkillFromDb(id: string): boolean {
   const stmt = db.prepare("DELETE FROM skills WHERE id = ? OR skill_id = ?");
   const result: any = stmt.run(id, id);
   return result.changes > 0;
+}
+
+export function incrementSkillInstallsInDb(id: string): { installs: number; weeklyInstalls: number[] } | null {
+  const getStmt = db.prepare("SELECT * FROM skills WHERE id = ? OR skill_id = ? LIMIT 1");
+  const row: any = getStmt.get(id, id);
+  if (!row) return null;
+
+  const newInstalls = (row.installs || 0) + 1;
+  let weekly = [0, 0, 0, 0, 0, 0, 0, 0];
+  try {
+    if (row.weekly_installs) {
+      weekly = JSON.parse(row.weekly_installs);
+    }
+  } catch {
+    weekly = [0, 0, 0, 0, 0, 0, 0, 0];
+  }
+
+  if (!Array.isArray(weekly) || weekly.length === 0) {
+    weekly = [0, 0, 0, 0, 0, 0, 0, newInstalls];
+  } else {
+    weekly[weekly.length - 1] = (weekly[weekly.length - 1] || 0) + 1;
+  }
+
+  const updateStmt = db.prepare(`
+    UPDATE skills SET 
+      installs = ?,
+      weekly_installs = ?,
+      updated_at = datetime('now')
+    WHERE id = ?
+  `);
+  updateStmt.run(newInstalls, JSON.stringify(weekly), row.id);
+
+  return { installs: newInstalls, weeklyInstalls: weekly };
 }
 
 export function getDbStats(): { totalSkills: number; customSkills: number } {

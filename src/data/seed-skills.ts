@@ -120,5 +120,20 @@ export const SEED_SKILLS: SkillItem[] = [
     description: "Hypothesis-driven root cause analysis: observe error, formulate hypotheses, test, verify fix.",
     category: "debugging",
     stars: 17200,
+  },
+  {
+    id: "yousefnaim/yousefnaim-protofolio/yousefnaim-protofolio",
+    source: "yousefnaim/yousefnaim-protofolio",
+    skillId: "yousefnaim-protofolio",
+    name: "yousefnaim-protofolio",
+    installs: 3,
+    weeklyInstalls: [1, 2, 3, 5, 8, 12, 18, 25],
+    isOfficial: false,
+    isCustom: true,
+    description: "Imported skill from https://github.com/yousefnaim/yousefnaim-protofolio",
+    category: "imported",
+    stars: 1,
+    repoUrl: "https://github.com/yousefnaim/yousefnaim-protofolio",
+    markdownContent: "# yousefnaim-protofolio\n\nImported from [yousefnaim/yousefnaim-protofolio](https://github.com/yousefnaim/yousefnaim-protofolio).\n\nRun:\n```bash\nnpx skills add https://github.com/yousefnaim/yousefnaim-protofolio --skill yousefnaim-protofolio\n```",
   }
 ];
