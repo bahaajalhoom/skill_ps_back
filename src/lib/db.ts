@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { SkillItem, CustomSkillInput } from "../types/index.js";
+import { SkillItem, CustomSkillInput, InstallLog, TelemetryStats } from "../types/index.js";
 import { SEED_SKILLS } from "../data/seed-skills.js";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -40,6 +40,31 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_skills_installs ON skills (installs DESC);
     CREATE INDEX IF NOT EXISTS idx_skills_name ON skills (name);
     CREATE INDEX IF NOT EXISTS idx_skills_custom ON skills (is_custom);
+
+    CREATE TABLE IF NOT EXISTS skill_install_logs (
+      id TEXT PRIMARY KEY,
+      skill_id TEXT NOT NULL,
+      skill_name TEXT NOT NULL,
+      source TEXT NOT NULL,
+      ip TEXT NOT NULL,
+      country TEXT,
+      country_code TEXT,
+      city TEXT,
+      region TEXT,
+      latitude REAL,
+      longitude REAL,
+      isp TEXT,
+      user_agent TEXT,
+      browser TEXT,
+      os TEXT,
+      device TEXT,
+      agent_target TEXT DEFAULT 'cli',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_install_logs_skill ON skill_install_logs (skill_id);
+    CREATE INDEX IF NOT EXISTS idx_install_logs_created ON skill_install_logs (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_install_logs_ip ON skill_install_logs (ip);
   `);
 
   // Seed default skills if empty
@@ -253,4 +278,145 @@ export function getDbStats(): { totalSkills: number; customSkills: number } {
     totalSkills: total?.c || 0,
     customSkills: custom?.c || 0,
   };
+}
+
+// ==========================================
+// TELEMETRY & INSTALL LOGGING FOR ADMIN
+// ==========================================
+
+export function recordInstallLogInDb(log: InstallLog): void {
+  const stmt = db.prepare(`
+    INSERT INTO skill_install_logs (
+      id, skill_id, skill_name, source, ip, country, country_code, city, region,
+      latitude, longitude, isp, user_agent, browser, os, device, agent_target, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  stmt.run(
+    log.id,
+    log.skillId,
+    log.skillName,
+    log.source,
+    log.ip,
+    log.country || "Unknown Country",
+    log.countryCode || "UN",
+    log.city || "Unknown City",
+    log.region || "",
+    log.latitude || null,
+    log.longitude || null,
+    log.isp || "Network Provider",
+    log.userAgent || "",
+    log.browser || "Unknown Browser",
+    log.os || "Unknown OS",
+    log.device || "Desktop",
+    log.agentTarget || "cli",
+    log.createdAt || new Date().toISOString()
+  );
+}
+
+export function getInstallLogsFromDb(
+  limit = 100,
+  offset = 0,
+  search?: string
+): { logs: InstallLog[]; total: number } {
+  let countQuery = "SELECT COUNT(*) as count FROM skill_install_logs";
+  let query = "SELECT * FROM skill_install_logs";
+  const params: any[] = [];
+
+  if (search && search.trim()) {
+    const s = `%${search.trim().toLowerCase()}%`;
+    const whereClause = ` WHERE lower(skill_name) LIKE ? OR lower(ip) LIKE ? OR lower(country) LIKE ? OR lower(city) LIKE ? OR lower(browser) LIKE ? OR lower(agent_target) LIKE ?`;
+    countQuery += whereClause;
+    query += whereClause;
+    params.push(s, s, s, s, s, s);
+  }
+
+  const countStmt = db.prepare(countQuery);
+  const countRow: any = params.length > 0 ? countStmt.get(...params) : countStmt.get();
+  const total = countRow?.count || 0;
+
+  query += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+  const fetchParams = [...params, limit, offset];
+  const stmt = db.prepare(query);
+  const rows = stmt.all(...fetchParams);
+
+  const logs: InstallLog[] = rows.map((r: any) => ({
+    id: r.id,
+    skillId: r.skill_id,
+    skillName: r.skill_name,
+    source: r.source,
+    ip: r.ip,
+    country: r.country,
+    countryCode: r.country_code,
+    city: r.city,
+    region: r.region,
+    latitude: r.latitude,
+    longitude: r.longitude,
+    isp: r.isp,
+    userAgent: r.user_agent,
+    browser: r.browser,
+    os: r.os,
+    device: r.device,
+    agentTarget: r.agent_target,
+    createdAt: r.created_at,
+  }));
+
+  return { logs, total };
+}
+
+export function getTelemetryStatsFromDb(): TelemetryStats {
+  const totalStmt = db.prepare("SELECT COUNT(*) as count, COUNT(DISTINCT ip) as unique_ips FROM skill_install_logs");
+  const totalRow: any = totalStmt.get();
+
+  const countriesStmt = db.prepare(`
+    SELECT country, country_code, COUNT(*) as count 
+    FROM skill_install_logs 
+    GROUP BY country, country_code 
+    ORDER BY count DESC 
+    LIMIT 10
+  `);
+  const countryRows: any[] = countriesStmt.all();
+
+  const skillsStmt = db.prepare(`
+    SELECT skill_name as name, source, COUNT(*) as installs 
+    FROM skill_install_logs 
+    GROUP BY skill_id, skill_name, source 
+    ORDER BY installs DESC 
+    LIMIT 5
+  `);
+  const skillRows: any[] = skillsStmt.all();
+
+  const agentsStmt = db.prepare(`
+    SELECT agent_target as agent, COUNT(*) as count 
+    FROM skill_install_logs 
+    GROUP BY agent_target 
+    ORDER BY count DESC
+  `);
+  const agentRows: any[] = agentsStmt.all();
+
+  return {
+    totalInstalls: totalRow?.count || 0,
+    uniqueIps: totalRow?.unique_ips || 0,
+    countriesCount: countryRows.length,
+    topCustomSkills: skillRows.map((s) => ({
+      name: s.name,
+      source: s.source,
+      installs: s.installs,
+    })),
+    countryBreakdown: countryRows.map((c) => ({
+      country: c.country,
+      countryCode: c.country_code,
+      count: c.count,
+    })),
+    agentBreakdown: agentRows.map((a) => ({
+      agent: a.agent || "cli",
+      count: a.count,
+    })),
+  };
+}
+
+export function clearInstallLogsInDb(): boolean {
+  const stmt = db.prepare("DELETE FROM skill_install_logs");
+  stmt.run();
+  return true;
 }

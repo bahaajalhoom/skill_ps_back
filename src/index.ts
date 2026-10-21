@@ -1,9 +1,22 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { initDb, getSkillsFromDb, saveCustomSkillToDb, deleteSkillFromDb, getDbStats, incrementSkillInstallsInDb } from "./lib/db.js";
+import {
+  initDb,
+  getSkillsFromDb,
+  getSkillByIdFromDb,
+  saveCustomSkillToDb,
+  deleteSkillFromDb,
+  getDbStats,
+  incrementSkillInstallsInDb,
+  recordInstallLogInDb,
+  getInstallLogsFromDb,
+  getTelemetryStatsFromDb,
+  clearInstallLogsInDb,
+} from "./lib/db.js";
 import { fetchSkills, searchSkills, fetchSkillDetail } from "./lib/ecosystem-client.js";
-import { CustomSkillInput } from "./types/index.js";
+import { extractClientIp, resolveGeoLocation, parseUserAgent } from "./lib/geo.js";
+import { CustomSkillInput, InstallLog } from "./types/index.js";
 
 dotenv.config();
 
@@ -132,27 +145,105 @@ app.delete("/api/custom-skills/:id(*)", (req: Request, res: Response) => {
   }
 });
 
-// 6. Record Real Skill Install (Increment Counter)
-app.post("/api/skills/install", (req: Request, res: Response) => {
+// 6. Record Real Skill Install (Increment Counter & Telemetry for Custom Skills)
+app.post("/api/skills/install", async (req: Request, res: Response) => {
   try {
     const id = String(req.body?.id || req.body?.skillId || "");
+    const agentTarget = String(req.body?.agentTarget || "cli");
+
     if (!id) {
       return res.status(400).json({ error: "Skill id is required" });
     }
 
-    const result = incrementSkillInstallsInDb(id);
-    if (result) {
-      return res.json({ success: true, id, ...result });
+    // Verify if this is a custom skill in our SQL database
+    const skill = getSkillByIdFromDb(id);
+    if (!skill || !skill.isCustom) {
+      return res.status(400).json({
+        success: false,
+        message: "Ecosystem skill installs are tracked upstream and cannot be overwritten.",
+      });
     }
 
-    // If not a custom skill in local SQL, do NOT return simulated 1
-    return res.status(400).json({
-      success: false,
-      message: "Ecosystem skill installs are tracked upstream and cannot be overwritten.",
+    // Increment install count in DB
+    const result = incrementSkillInstallsInDb(id);
+    if (!result) {
+      return res.status(500).json({ error: "Failed to increment installs" });
+    }
+
+    // Extract client IP & metadata
+    const ip = extractClientIp(req);
+    const uaRaw = req.headers["user-agent"] || "";
+    const uaParsed = parseUserAgent(uaRaw);
+    const geo = await resolveGeoLocation(ip, req);
+
+    const log: InstallLog = {
+      id: `inst_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      skillId: skill.id,
+      skillName: skill.name,
+      source: skill.source,
+      ip,
+      country: geo.country,
+      countryCode: geo.countryCode,
+      city: geo.city,
+      region: geo.region,
+      latitude: geo.latitude,
+      longitude: geo.longitude,
+      isp: geo.isp,
+      userAgent: uaRaw,
+      browser: uaParsed.browser,
+      os: uaParsed.os,
+      device: uaParsed.device,
+      agentTarget,
+      createdAt: new Date().toISOString(),
+    };
+
+    recordInstallLogInDb(log);
+
+    res.json({
+      success: true,
+      id: skill.id,
+      installs: result.installs,
+      weeklyInstalls: result.weeklyInstalls,
+      log,
     });
   } catch (err: any) {
     console.error("Error in POST /api/skills/install:", err.message);
     res.status(500).json({ error: "Failed to increment installs", details: err.message });
+  }
+});
+
+// 7. Admin Analytics & Install Telemetry
+app.get("/api/admin/installs", (_req: Request, res: Response) => {
+  try {
+    const limit = parseInt(_req.query.limit as string, 10) || 100;
+    const page = parseInt(_req.query.page as string, 10) || 0;
+    const offset = page * limit;
+    const search = (_req.query.q as string) || "";
+
+    const { logs, total } = getInstallLogsFromDb(limit, offset, search);
+    const stats = getTelemetryStatsFromDb();
+
+    res.json({
+      success: true,
+      stats,
+      logs,
+      total,
+      page,
+      limit,
+    });
+  } catch (err: any) {
+    console.error("Error in GET /api/admin/installs:", err.message);
+    res.status(500).json({ error: "Failed to fetch admin telemetry", details: err.message });
+  }
+});
+
+app.delete("/api/admin/installs", (_req: Request, res: Response) => {
+  try {
+    clearInstallLogsInDb();
+    res.json({ success: true, message: "Install logs cleared successfully" });
+  } catch (err: any) {
+    console.error("Error in DELETE /api/admin/installs:", err.message);
+    res.status(500).json({ error: "Failed to clear install logs", details: err.message });
   }
 });
 
