@@ -1,4 +1,6 @@
 import { Request } from "express";
+import os from "node:os";
+import dns from "node:dns/promises";
 
 export interface GeoLocation {
   country: string;
@@ -83,6 +85,62 @@ function isPrivateIp(ip: string): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Resolves the client machine/device username (يوزر الجهاز).
+ * Supports CLI/headers, local machine OS username, reverse DNS hostname, and client identification.
+ */
+export async function resolveDeviceUser(req: Request, ip: string): Promise<string> {
+  // 1. Check custom headers or request payload from CLI / client
+  const headerUser =
+    req.headers["x-device-user"] ||
+    req.headers["x-client-user"] ||
+    req.body?.deviceUser ||
+    req.body?.clientUser;
+
+  if (headerUser && typeof headerUser === "string" && headerUser.trim()) {
+    return headerUser.trim();
+  }
+
+  // 2. If client is on local machine / private subnet
+  if (isPrivateIp(ip)) {
+    try {
+      const sysUser = os.userInfo().username;
+      const sysHost = os.hostname();
+      if (sysUser && sysUser !== "root") {
+        return `${sysUser}@${sysHost}`;
+      }
+      return sysHost || sysUser || "local-developer";
+    } catch {
+      const envUser = process.env.USER || process.env.USERNAME;
+      if (envUser) return envUser;
+    }
+  }
+
+  // 3. Try reverse DNS lookup on IP to get computer / host name
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1200);
+    const hostnames = await Promise.race([
+      dns.reverse(ip),
+      new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 1200)),
+    ]);
+    clearTimeout(timeout);
+    if (Array.isArray(hostnames) && hostnames.length > 0) {
+      const host = hostnames[0].split(".")[0];
+      if (host && host.length >= 2 && !host.startsWith("ip-") && !host.startsWith("cpe-")) {
+        return host;
+      }
+    }
+  } catch {
+    // Reverse DNS timeout or residential ISP
+  }
+
+  // 4. Derive from client User-Agent and platform
+  const uaRaw = req.headers["user-agent"] || "";
+  const parsed = parseUserAgent(uaRaw);
+  return `${parsed.os}-${parsed.device}`;
 }
 
 /**

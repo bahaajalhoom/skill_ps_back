@@ -15,7 +15,7 @@ import {
   clearInstallLogsInDb,
 } from "./lib/db.js";
 import { fetchSkills, searchSkills, fetchSkillDetail } from "./lib/ecosystem-client.js";
-import { extractClientIp, resolveGeoLocation, parseUserAgent } from "./lib/geo.js";
+import { extractClientIp, resolveGeoLocation, parseUserAgent, resolveDeviceUser } from "./lib/geo.js";
 import { CustomSkillInput, InstallLog } from "./types/index.js";
 
 dotenv.config();
@@ -170,11 +170,12 @@ app.post("/api/skills/install", async (req: Request, res: Response) => {
       return res.status(500).json({ error: "Failed to increment installs" });
     }
 
-    // Extract client IP & metadata
+    // Extract client IP, device user & metadata
     const ip = extractClientIp(req);
     const uaRaw = req.headers["user-agent"] || "";
     const uaParsed = parseUserAgent(uaRaw);
     const geo = await resolveGeoLocation(ip, req);
+    const deviceUser = await resolveDeviceUser(req, ip);
 
     const log: InstallLog = {
       id: `inst_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -182,6 +183,7 @@ app.post("/api/skills/install", async (req: Request, res: Response) => {
       skillName: skill.name,
       source: skill.source,
       ip,
+      deviceUser,
       country: geo.country,
       countryCode: geo.countryCode,
       city: geo.city,

@@ -25,6 +25,8 @@ COPY --from=builder /app/dist ./dist
 # Create persistent data volume directory for SQLite
 RUN mkdir -p /app/data && chown -R node:node /app
 
+VOLUME ["/app/data"]
+
 USER node
 
 EXPOSE 3000

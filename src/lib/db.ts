@@ -47,6 +47,7 @@ export function initDb(): void {
       skill_name TEXT NOT NULL,
       source TEXT NOT NULL,
       ip TEXT NOT NULL,
+      device_user TEXT DEFAULT 'unknown',
       country TEXT,
       country_code TEXT,
       city TEXT,
@@ -67,35 +68,35 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_install_logs_ip ON skill_install_logs (ip);
   `);
 
-  // Seed default skills if empty
-  const countStmt = db.prepare("SELECT COUNT(*) as count FROM skills");
-  const result: any = countStmt.get();
+  // Migration: Ensure device_user column exists if table was created previously
+  try {
+    db.exec("ALTER TABLE skill_install_logs ADD COLUMN device_user TEXT DEFAULT 'unknown';");
+  } catch {
+    // Column already exists
+  }
 
-  if (!result || result.count === 0) {
-    console.log("Seeding initial SQL database with verified agent skills...");
-    const insertStmt = db.prepare(`
-      INSERT OR REPLACE INTO skills (
-        id, source, skill_id, name, installs, weekly_installs, is_official, is_custom, description, category, stars, repo_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+  // Safe merge: Always merge seed skills without overwriting existing data (INSERT OR IGNORE)
+  const insertStmt = db.prepare(`
+    INSERT OR IGNORE INTO skills (
+      id, source, skill_id, name, installs, weekly_installs, is_official, is_custom, description, category, stars, repo_url
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
-    for (const s of SEED_SKILLS) {
-      insertStmt.run(
-        s.id,
-        s.source,
-        s.skillId,
-        s.name,
-        s.installs,
-        JSON.stringify(s.weeklyInstalls || [0, 0, 0, 0, 0, 0, 0, 0]),
-        s.isOfficial ? 1 : 0,
-        s.isCustom ? 1 : 0,
-        s.description || "",
-        s.category || "workflow",
-        s.stars || 0,
-        s.repoUrl || `https://github.com/${s.source}`
-      );
-    }
-    console.log(`Seeded ${SEED_SKILLS.length} verified skills in SQL database.`);
+  for (const s of SEED_SKILLS) {
+    insertStmt.run(
+      s.id,
+      s.source,
+      s.skillId,
+      s.name,
+      s.installs,
+      JSON.stringify(s.weeklyInstalls || [0, 0, 0, 0, 0, 0, 0, 0]),
+      s.isOfficial ? 1 : 0,
+      s.isCustom ? 1 : 0,
+      s.description || "",
+      s.category || "workflow",
+      s.stars || 0,
+      s.repoUrl || `https://github.com/${s.source}`
+    );
   }
 }
 
@@ -287,9 +288,9 @@ export function getDbStats(): { totalSkills: number; customSkills: number } {
 export function recordInstallLogInDb(log: InstallLog): void {
   const stmt = db.prepare(`
     INSERT INTO skill_install_logs (
-      id, skill_id, skill_name, source, ip, country, country_code, city, region,
+      id, skill_id, skill_name, source, ip, device_user, country, country_code, city, region,
       latitude, longitude, isp, user_agent, browser, os, device, agent_target, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -298,6 +299,7 @@ export function recordInstallLogInDb(log: InstallLog): void {
     log.skillName,
     log.source,
     log.ip,
+    log.deviceUser || "unknown",
     log.country || "Unknown Country",
     log.countryCode || "UN",
     log.city || "Unknown City",
@@ -325,10 +327,10 @@ export function getInstallLogsFromDb(
 
   if (search && search.trim()) {
     const s = `%${search.trim().toLowerCase()}%`;
-    const whereClause = ` WHERE lower(skill_name) LIKE ? OR lower(ip) LIKE ? OR lower(country) LIKE ? OR lower(city) LIKE ? OR lower(browser) LIKE ? OR lower(agent_target) LIKE ?`;
+    const whereClause = ` WHERE lower(skill_name) LIKE ? OR lower(ip) LIKE ? OR lower(device_user) LIKE ? OR lower(country) LIKE ? OR lower(city) LIKE ? OR lower(browser) LIKE ? OR lower(agent_target) LIKE ?`;
     countQuery += whereClause;
     query += whereClause;
-    params.push(s, s, s, s, s, s);
+    params.push(s, s, s, s, s, s, s);
   }
 
   const countStmt = db.prepare(countQuery);
@@ -346,6 +348,7 @@ export function getInstallLogsFromDb(
     skillName: r.skill_name,
     source: r.source,
     ip: r.ip,
+    deviceUser: r.device_user || "unknown",
     country: r.country,
     countryCode: r.country_code,
     city: r.city,
